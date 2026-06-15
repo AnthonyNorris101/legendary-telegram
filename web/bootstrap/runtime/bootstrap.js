@@ -1,7 +1,13 @@
 import { ensureBrowserGlobals } from "./globals.js";
 import { callGameStart, loadCssFile, loadManifest, loadModule } from "./loader.js";
 import { setLoaderState, setStatus, showError } from "./ui.js";
+import { attachAutoSkiller } from "./auto-skiller/index.js";
 import { attachWaveTracker } from "./wave-tracker/index.js";
+
+function isRuntimeFeatureEnabled(key) {
+    const runtimeConfig = window.__EF_RUNTIME_CONFIG__ || {};
+    return runtimeConfig[key] !== false;
+}
 
 async function waitForSplashFirstPaint() {
     // Let the splash render before loading the heavy game module.
@@ -39,7 +45,7 @@ async function bootstrapRuntime() {
         }
     }
 
-    if (!window.__EF_WAVE_TRACKER_HANDLE__) {
+    if (isRuntimeFeatureEnabled("showWaveTracker") && !window.__EF_WAVE_TRACKER_HANDLE__) {
         try {
             window.__EF_WAVE_TRACKER_HANDLE__ = attachWaveTracker({
                 scanWarnMs: 15000,
@@ -47,6 +53,17 @@ async function bootstrapRuntime() {
             });
         } catch (error) {
             console.warn("[ef-runtime] wave tracker install failed:", error);
+        }
+    }
+
+    if (isRuntimeFeatureEnabled("showAutoSkiller") && !window.__EF_AUTO_SKILLER_HANDLE__) {
+        try {
+            window.__EF_AUTO_SKILLER_HANDLE__ = attachAutoSkiller({
+                scanWarnMs: 15000,
+                scanHardTimeoutMs: null
+            });
+        } catch (error) {
+            console.warn("[ef-runtime] auto skiller install failed:", error);
         }
     }
 

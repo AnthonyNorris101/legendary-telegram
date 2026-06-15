@@ -234,9 +234,7 @@ export function installNetworkProxy() {
             window.__EF_HERO_REBIRTH_MEDAL_TIER__ = window.__EF_BATCH_WAVE_MEDALS__.byVersion[latestVersion];
         }
     }
-    
-    window.__EF_NETWORK_DUMP__ = window.__EF_NETWORK_DUMP__ || [];
-    
+
     const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
         const originalUrl = extractUrl(input);
@@ -250,15 +248,6 @@ export function installNetworkProxy() {
                 if (text) {
                     const payload = JSON.parse(text);
                     storeRebirthMedalTier({ payload, sourceUrl: originalUrl });
-
-                    window.__EF_NETWORK_DUMP__.push({ 
-                        url: originalUrl, 
-                        timestamp: Date.now(),
-                        payload: payload 
-                    });
-                    if (text.toLowerCase().includes("thegoldpetal")) {
-                        console.log("[!] SUSPECTED GUILD DATA INTERCEPTED:", originalUrl, payload);
-                    }
                 }
             } catch (error) {
                 // Ignore parse/store errors to keep runtime stable.

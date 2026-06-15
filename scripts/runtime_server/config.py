@@ -17,14 +17,21 @@ def _load_config() -> dict[str, Any]:
         return json.load(file_obj)
 
 
+def get_config() -> dict[str, Any]:
+    try:
+        return _load_config()
+    except (OSError, json.JSONDecodeError):
+        return CONFIG
+
+
+def _get_section(config: dict[str, Any], key: str) -> dict[str, Any]:
+    value = config.get(key, {})
+    return value if isinstance(value, dict) else {}
+
+
 def _get_bool(config: dict[str, Any], key: str, default: bool) -> bool:
     value = config.get(key, default)
     return value if isinstance(value, bool) else default
-
-
-def _get_int(config: dict[str, Any], key: str, default: int) -> int:
-    value = config.get(key, default)
-    return value if isinstance(value, int) else default
 
 
 def _get_port(config: dict[str, Any], key: str, default: int) -> int:
@@ -34,29 +41,26 @@ def _get_port(config: dict[str, Any], key: str, default: int) -> int:
     return default
 
 
-def _get_string_values(config: dict[str, Any], key: str) -> tuple[str, ...]:
-    value = config.get(key, {})
-    if not isinstance(value, dict):
-        return ()
-    return tuple(str(item) for item in value.values())
-
-
 CONFIG = _load_config()
-LOGGING_CONFIG = CONFIG.get("logging", {})
-if not isinstance(LOGGING_CONFIG, dict):
-    LOGGING_CONFIG = {}
 
-REMOTE_BASE = str(CONFIG.get("remoteBase", "https://game.endlessfrontier.io"))
-REMOTE_WS_ORIGIN = str(CONFIG.get("remoteWsOrigin", "ws://game.endlessfrontier.io:5001"))
-PROXY_PREFIX = str(CONFIG.get("proxyPrefix", "/__ef_proxy__"))
-WS_PROXY_PREFIX = str(CONFIG.get("wsProxyPrefix", "/__ef_ws_proxy__"))
-APP_BASE_PATH = str(CONFIG.get("appBasePath", "/endlessfrontier2"))
+REMOTE_BASE = "https://game.endlessfrontier.io"
+REMOTE_WS_ORIGIN = "ws://game.endlessfrontier.io:5001"
+PROXY_PREFIX = "/__ef_proxy__"
+WS_PROXY_PREFIX = "/__ef_ws_proxy__"
+APP_BASE_PATH = "/endlessfrontier2"
 LISTEN_PORT = _get_port(CONFIG, "listenPort", 8080)
 
-BUNDLE_STATIC_PREFIXES = _get_string_values(CONFIG, "bundleStaticPrefixes")
-BUNDLE_STATIC_FILES = set(_get_string_values(CONFIG, "bundleStaticFiles"))
+def get_feature_flags() -> dict[str, bool]:
+    features_config = _get_section(get_config(), "features")
+    return {
+        "showWaveTracker": _get_bool(features_config, "showWaveTracker", True),
+        "showAutoSkiller": _get_bool(features_config, "showAutoSkiller", True),
+    }
 
-SHOW_REQUEST_LOGS = _get_bool(LOGGING_CONFIG, "showRequestLogs", True)
-SHOW_ASSET_REQUEST_LOGS = _get_bool(LOGGING_CONFIG, "showAssetRequestLogs", False)
-SHOW_HEARTBEAT_LOGS = _get_bool(LOGGING_CONFIG, "showHeartbeatLogs", True)
-HEARTBEAT_INTERVAL_SECONDS = _get_int(LOGGING_CONFIG, "heartbeatIntervalSeconds", 60)
+
+def get_logging_flags() -> dict[str, bool]:
+    logging_config = _get_section(get_config(), "logging")
+    return {
+        "showRequestLogs": _get_bool(logging_config, "showRequestLogs", True),
+        "showAssetRequestLogs": _get_bool(logging_config, "showAssetRequestLogs", False),
+    }
