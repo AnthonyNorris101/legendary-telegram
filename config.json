@@ -2,7 +2,8 @@
   "listenPort": 8080,
   "features": {
     "showWaveTracker": true,
-    "showAutoSkiller": true
+    "showAutoSkiller": true,
+    "showProcChance": true
   },
   "logging": {
     "showRequestLogs": false,

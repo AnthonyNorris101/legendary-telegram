@@ -6,6 +6,7 @@ export const PROXY_PREFIX = runtimeConfig.proxyPrefix;
 export const WS_PROXY_PREFIX = runtimeConfig.wsProxyPrefix;
 export const SHOW_WAVE_TRACKER = runtimeConfig.showWaveTracker !== false;
 export const SHOW_AUTO_SKILLER = runtimeConfig.showAutoSkiller !== false;
+export const SHOW_PROC_CHANCE = runtimeConfig.showProcChance !== false;
 
 export const FIREBASE_DEFAULT_CONFIG = {
     apiKey: "AIzaSyC_ZDJUKRitUUZIwYK3LPe1qqZooG3kL6A",
