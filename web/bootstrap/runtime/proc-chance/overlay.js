@@ -10,12 +10,12 @@ function ensureStyle() {
     style.textContent = `
 #${OVERLAY_ID} {
   position: fixed;
-  top: 42px;
-  right: 8px;
+  top: 374px;
+  left: 8px;
   z-index: 2147483647;
   box-sizing: border-box;
-  width: 210px;
-  min-width: 210px;
+  width: 230px;
+  min-width: 230px;
   max-width: calc(100vw - 16px);
   padding: 9px 11px;
   border: 1px solid rgba(255, 224, 138, 0.35);
