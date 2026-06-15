@@ -3,6 +3,7 @@ import { callGameStart, loadCssFile, loadManifest, loadModule } from "./loader.j
 import { setLoaderState, setStatus, showError } from "./ui.js";
 import { attachAutoSkiller } from "./auto-skiller/index.js";
 import { attachWaveTracker } from "./wave-tracker/index.js";
+import { attachProcChance } from "./proc-chance/index.js";
 
 function isRuntimeFeatureEnabled(key) {
     const runtimeConfig = window.__EF_RUNTIME_CONFIG__ || {};
@@ -64,6 +65,17 @@ async function bootstrapRuntime() {
             });
         } catch (error) {
             console.warn("[ef-runtime] auto skiller install failed:", error);
+        }
+    }
+
+    if (isRuntimeFeatureEnabled("showProcChance") && !window.__EF_PROC_CHANCE_HANDLE__) {
+        try {
+            window.__EF_PROC_CHANCE_HANDLE__ = attachProcChance({
+                scanWarnMs: 15000,
+                scanHardTimeoutMs: null
+            });
+        } catch (error) {
+            console.warn("[ef-runtime] proc chance install failed:", error);
         }
     }
 

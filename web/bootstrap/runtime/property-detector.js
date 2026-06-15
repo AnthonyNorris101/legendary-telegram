@@ -10,7 +10,7 @@ function getObservedEntry(prop) {
 
 function notifyCandidate(target, prop) {
     const entry = getObservedEntry(prop);
-    if (!entry || !target || typeof target !== "object") {
+    if (!entry || !target || (typeof target !== "object" && typeof target !== "function")) {
         return;
     }
 

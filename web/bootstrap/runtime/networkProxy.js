@@ -1,6 +1,237 @@
 import { PROXY_PREFIX, REMOTE_ORIGIN, REMOTE_WS_ORIGIN, WS_PROXY_PREFIX } from "./config.js";
+import { installObjectPropertyCandidateDetector } from "./property-detector.js";
 
 const REBIRTH_TIER_STORAGE_KEY = "__EF_HERO_REBIRTH_MEDAL_TIER_CACHE__";
+const NETWORK_LOG_LIMIT = 200;
+const REQUEST_MANAGER_WRAPPED_MARKER = "__efNetworkRequestManagerWrapped";
+const REQUEST_MANAGER_DETECTED_MARKER = "__efNetworkRequestManagerDetected";
+const REQUEST_MANAGER_LOGGER_INSTALLED_MARKER = "__efNetworkRequestLoggerInstalled";
+
+let detectedRequestManager = null;
+
+function safeCloneValue(value, seen = new WeakSet()) {
+    if (value == null || typeof value !== "object") {
+        return value;
+    }
+    if (seen.has(value)) {
+        return "[Circular]";
+    }
+    seen.add(value);
+    if (Array.isArray(value)) {
+        return value.map(item => safeCloneValue(item, seen));
+    }
+    const output = {};
+    for (const [key, item] of Object.entries(value)) {
+        output[key] = safeCloneValue(item, seen);
+    }
+    return output;
+}
+
+function parseJsonIfPossible(value) {
+    if (typeof value !== "string") {
+        return value;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return value;
+    }
+    try {
+        return JSON.parse(trimmed);
+    } catch (error) {
+        return value;
+    }
+}
+
+function normalizeBodyForLog(body) {
+    if (body == null) {
+        return null;
+    }
+    if (typeof body === "string") {
+        return parseJsonIfPossible(body);
+    }
+    if (body instanceof URLSearchParams) {
+        return Object.fromEntries(body.entries());
+    }
+    if (body instanceof FormData) {
+        return Object.fromEntries(Array.from(body.entries()).map(([key, value]) => [
+            key,
+            typeof value === "string" ? value : `[${value?.constructor?.name || "File"}]`
+        ]));
+    }
+    if (body instanceof Blob) {
+        return `[Blob ${body.type || "application/octet-stream"} ${body.size}b]`;
+    }
+    if (body instanceof ArrayBuffer) {
+        return `[ArrayBuffer ${body.byteLength}b]`;
+    }
+    if (ArrayBuffer.isView(body)) {
+        return `[${body.constructor?.name || "TypedArray"} ${body.byteLength}b]`;
+    }
+    return safeCloneValue(body);
+}
+
+function ensureNetworkLog() {
+    if (!Array.isArray(window.__EF_DECRYPTED_NETWORK_LOG__)) {
+        window.__EF_DECRYPTED_NETWORK_LOG__ = [];
+    }
+    return window.__EF_DECRYPTED_NETWORK_LOG__;
+}
+
+function recordNetworkLog(entry) {
+    try {
+        const log = ensureNetworkLog();
+        const normalizedEntry = {
+            at: new Date().toISOString(),
+            ...entry
+        };
+        log.push(normalizedEntry);
+        while (log.length > NETWORK_LOG_LIMIT) {
+            log.shift();
+        }
+        if (entry.decrypted === true) {
+            console.info(`[ef-network] decrypted ${entry.direction || "entry"}`, normalizedEntry);
+        } else {
+            console.info(`[ef-network] ${entry.direction || "entry"}`, normalizedEntry);
+        }
+        return normalizedEntry;
+    } catch (error) {
+        return null;
+    }
+}
+
+function base64ToUint8Array(value) {
+    const binary = atob(String(value || ""));
+    const output = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        output[index] = binary.charCodeAt(index);
+    }
+    return output;
+}
+
+function toArrayBuffer(value) {
+    return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+}
+
+function normalizeEncryptedEnvelope(payload) {
+    const parsed = typeof payload === "string" ? parseJsonIfPossible(payload) : payload;
+    if (!parsed || typeof parsed !== "object") {
+        return null;
+    }
+    const envelope = parsed.enc && typeof parsed.enc === "object" ? parsed.enc : parsed;
+    return envelope.encryptedData && envelope.iv && envelope.authTag ? envelope : null;
+}
+
+async function decryptGamePayload(payload, url = "") {
+    const manager = detectedRequestManager;
+    const envelope = normalizeEncryptedEnvelope(payload);
+    if (!envelope) {
+        return parseJsonIfPossible(payload);
+    }
+    if (!manager?.sharedKey) {
+        throw new Error("RequestManager shared key is not available yet.");
+    }
+
+    const encryptedData = base64ToUint8Array(envelope.encryptedData);
+    const authTag = base64ToUint8Array(envelope.authTag);
+    const iv = base64ToUint8Array(envelope.iv);
+    const combined = new Uint8Array(encryptedData.length + authTag.length);
+    combined.set(encryptedData, 0);
+    combined.set(authTag, encryptedData.length);
+    const decrypted = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: toArrayBuffer(iv) },
+        manager.sharedKey,
+        toArrayBuffer(combined)
+    );
+    const text = new TextDecoder().decode(new Uint8Array(decrypted));
+    const result = parseJsonIfPossible(text);
+    recordNetworkLog({
+        direction: "manual-decrypt",
+        method: "POST",
+        url,
+        decrypted: true,
+        body: safeCloneValue(result),
+        source: "__EF_DECRYPT_GAME_PAYLOAD__"
+    });
+    return result;
+}
+
+function isRequestManager(candidate) {
+    return candidate
+        && typeof candidate === "function"
+        && typeof candidate.encrypt === "function"
+        && typeof candidate.decrypt === "function"
+        && typeof candidate.setParams === "function"
+        && typeof candidate.setData === "function"
+        && typeof candidate.getCk === "function"
+        && typeof candidate.setSharedKey === "function";
+}
+
+function installRequestManagerLogger() {
+    if (window[REQUEST_MANAGER_LOGGER_INSTALLED_MARKER]) {
+        return;
+    }
+    window[REQUEST_MANAGER_LOGGER_INSTALLED_MARKER] = true;
+    window.__EF_DECRYPT_GAME_PAYLOAD__ = decryptGamePayload;
+    ensureNetworkLog();
+
+    installObjectPropertyCandidateDetector(["_enc", "_resEnc", "sharedKey", "clientKeyPair"], (candidate) => {
+        if (!isRequestManager(candidate) || candidate[REQUEST_MANAGER_DETECTED_MARKER]) {
+            return;
+        }
+        candidate[REQUEST_MANAGER_DETECTED_MARKER] = true;
+        detectedRequestManager = candidate;
+        window.__EF_REQUEST_MANAGER__ = candidate;
+        wrapRequestManager(candidate);
+    });
+}
+
+function wrapRequestManager(manager) {
+    if (!isRequestManager(manager) || manager[REQUEST_MANAGER_WRAPPED_MARKER]) {
+        return;
+    }
+    const originalEncrypt = manager.encrypt;
+    const originalDecrypt = manager.decrypt;
+
+    manager.encrypt = async function wrappedNetworkEncrypt(payload, url, ...rest) {
+        recordNetworkLog({
+            direction: "request",
+            method: "POST",
+            url: String(url || ""),
+            decrypted: true,
+            body: normalizeBodyForLog(payload),
+            encryptionEnabled: manager.enc === true,
+            source: "RequestManager.encrypt"
+        });
+        const encrypted = await originalEncrypt.call(this, payload, url, ...rest);
+        if (encrypted !== payload) {
+            recordNetworkLog({
+                direction: "request-encrypted",
+                method: "POST",
+                url: String(url || ""),
+                decrypted: false,
+                body: normalizeBodyForLog(encrypted),
+                source: "RequestManager.encrypt"
+            });
+        }
+        return encrypted;
+    };
+
+    manager.decrypt = async function wrappedNetworkDecrypt(payload, url, ...rest) {
+        const decrypted = await originalDecrypt.call(this, payload, url, ...rest);
+        recordNetworkLog({
+            direction: "response",
+            method: "FETCH",
+            url: String(url || ""),
+            decrypted: true,
+            body: normalizeBodyForLog(decrypted),
+            responseEncrypted: payload !== decrypted,
+            source: "RequestManager.decrypt"
+        });
+        return decrypted;
+    };
+
+    manager[REQUEST_MANAGER_WRAPPED_MARKER] = true;
+}
 
 function proxiedUrl(input) {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : null;
@@ -32,6 +263,25 @@ function extractUrl(input) {
         return input.url;
     }
     return "";
+}
+
+function extractMethod(input, init) {
+    const method = init && typeof init.method === "string"
+        ? init.method
+        : input && typeof input === "object" && typeof input.method === "string"
+            ? input.method
+            : "GET";
+    return method.toUpperCase();
+}
+
+function extractFetchBody(input, init) {
+    if (init && Object.prototype.hasOwnProperty.call(init, "body")) {
+        return init.body;
+    }
+    if (input && typeof input === "object" && Object.prototype.hasOwnProperty.call(input, "body")) {
+        return input.body;
+    }
+    return null;
 }
 
 function isGetBatchUrl(url) {
@@ -206,6 +456,8 @@ function storeRebirthMedalTier({ payload, sourceUrl }) {
 }
 
 export function installNetworkProxy() {
+    installRequestManagerLogger();
+
     let persistedStore = null;
     try {
         const raw = window.localStorage.getItem(REBIRTH_TIER_STORAGE_KEY);
@@ -238,6 +490,15 @@ export function installNetworkProxy() {
     const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
         const originalUrl = extractUrl(input);
+        const method = extractMethod(input, init);
+        recordNetworkLog({
+            direction: "fetch",
+            method,
+            url: originalUrl,
+            decrypted: false,
+            body: normalizeBodyForLog(extractFetchBody(input, init)),
+            source: "window.fetch"
+        });
         const proxied = proxiedUrl(input);
         const response = await nativeFetch(proxied, init);
 
@@ -292,10 +553,19 @@ export function installNetworkProxy() {
     const nativeSend = NativeXHR.prototype.send;
     NativeXHR.prototype.open = function patchedOpen(method, url, ...rest) {
         this.__efOriginalUrl = extractUrl(url);
+        this.__efMethod = String(method || "GET").toUpperCase();
         return nativeOpen.call(this, method, proxiedUrl(url), ...rest);
     };
 
     NativeXHR.prototype.send = function patchedSend(body) {
+        recordNetworkLog({
+            direction: "xhr",
+            method: this.__efMethod || "GET",
+            url: this.__efOriginalUrl || "",
+            decrypted: false,
+            body: normalizeBodyForLog(body),
+            source: "XMLHttpRequest"
+        });
         this.addEventListener("readystatechange", () => {
             if (this.readyState !== 4) {
                 return;
