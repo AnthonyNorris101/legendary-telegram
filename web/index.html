@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    >
+    <title>Endless Frontier 2</title>
+    <link rel="stylesheet" href="./assets/styles/splash.css">
+    <script>
+        (function installEarlyWebSocketProxy() {
+            const remoteOrigin = "__EF_REMOTE_WS_ORIGIN__";
+            const proxyPrefix = "/__ef_ws_proxy__";
+            const NativeWebSocket = window.WebSocket;
+            if (typeof NativeWebSocket !== "function" || NativeWebSocket.__efPatched) {
+                return;
+            }
+
+            function proxiedWebSocketUrl(input) {
+                const url = typeof input === "string" ? input : input instanceof URL ? input.href : null;
+                if (!url || (!url.startsWith(remoteOrigin + "/") && url !== remoteOrigin)) {
+                    return input;
+                }
+                const localScheme = window.location.protocol === "https:" ? "wss:" : "ws:";
+                const proxied = `${localScheme}//${window.location.host}${proxyPrefix}?target=${encodeURIComponent(url)}`;
+                console.info("[ef-runtime] WebSocket proxied.", { from: url, to: proxied });
+                return proxied;
+            }
+
+            const PatchedWebSocket = function patchedWebSocket(url, protocols) {
+                const proxied = proxiedWebSocketUrl(url);
+                if (protocols === undefined) {
+                    return new NativeWebSocket(proxied);
+                }
+                return new NativeWebSocket(proxied, protocols);
+            };
+
+            PatchedWebSocket.prototype = NativeWebSocket.prototype;
+            PatchedWebSocket.CONNECTING = NativeWebSocket.CONNECTING;
+            PatchedWebSocket.OPEN = NativeWebSocket.OPEN;
+            PatchedWebSocket.CLOSING = NativeWebSocket.CLOSING;
+            PatchedWebSocket.CLOSED = NativeWebSocket.CLOSED;
+            PatchedWebSocket.__efPatched = true;
+            Object.setPrototypeOf(PatchedWebSocket, NativeWebSocket);
+
+            window.WebSocket = PatchedWebSocket;
+            window.__EF_NATIVE_WEBSOCKET__ = NativeWebSocket;
+        })();
+    </script>
+    <script src="./bootstrap/webLoader.js?v=ws-proxy-2"></script>
+</head>
+<body>
+    <div id="splash">
+        <div class="panel">
+            <h1 class="title">Endless Frontier 2<br>Browser Project</h1>
+            <p class="subtitle">Made by Rokhan</p>
+            <p class="status" id="status-text">Preparing runtime...</p>
+            <div class="bar">
+                <div class="bar-fill"></div>
+            </div>
+            <button id="start-game-btn" class="start-btn" type="button">Start Game</button>
+            <div class="actions">
+                <p class="server-status" id="server-status-text">Server Status: <span class="status-inactive">Checking...</span></p>
+                <p class="version" id="version-text">Version: --</p>
+            </div>
+            <button id="clear-cache-btn" class="ghost-btn" type="button">Clear Cache</button>
+        </div>
+    </div>
+
+    <div id="app"></div>
+    <div id="htmlOverlay"></div>
+
+    <script src="./assets/scripts/splash.js"></script>
+</body>
+</html>
