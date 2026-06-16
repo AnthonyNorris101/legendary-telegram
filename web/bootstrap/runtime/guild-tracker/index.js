@@ -129,7 +129,7 @@ async function postGameApi(path, payload = {}) {
         headers["x-cookie"] = requestManager.connectSid;
     }
 
-    const response = await fetch(url, {
+    const response = await window.fetch(url, {
         method: "POST",
         headers,
         credentials: "include",
