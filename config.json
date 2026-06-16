@@ -3,7 +3,8 @@
   "features": {
     "showWaveTracker": true,
     "showAutoSkiller": true,
-    "showProcChance": true
+    "showProcChance": true,
+    "showGuildTracker": true
   },
   "logging": {
     "showRequestLogs": false,
