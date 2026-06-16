@@ -4,6 +4,7 @@ import { setLoaderState, setStatus, showError } from "./ui.js";
 import { attachAutoSkiller } from "./auto-skiller/index.js";
 import { attachWaveTracker } from "./wave-tracker/index.js";
 import { attachProcChance } from "./proc-chance/index.js";
+import { attachGuildTracker } from "./guild-tracker/index.js";
 
 function isRuntimeFeatureEnabled(key) {
     const runtimeConfig = window.__EF_RUNTIME_CONFIG__ || {};
@@ -76,6 +77,16 @@ async function bootstrapRuntime() {
             });
         } catch (error) {
             console.warn("[ef-runtime] proc chance install failed:", error);
+        }
+    }
+
+    if (isRuntimeFeatureEnabled("showGuildTracker") && !window.__EF_GUILD_TRACKER_HANDLE__) {
+        try {
+            window.__EF_GUILD_TRACKER_HANDLE__ = attachGuildTracker({
+                scanWarnMs: 15000
+            });
+        } catch (error) {
+            console.warn("[ef-runtime] guild tracker install failed:", error);
         }
     }
 
