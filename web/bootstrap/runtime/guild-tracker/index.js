@@ -215,8 +215,8 @@ export function attachGuildTracker({ scanWarnMs = 15000 } = {}) {
 
     async function fetchRankList(guildId) {
         try {
-            const response = await postGameApi("/guild/getRankList", {
-                guildId,
+            const response = await postGameApi("/user/getRankList", {
+                type: "maxWave",
                 limit: RANK_LIST_LIMIT
             });
             const rankList = getNestedValue(response, [
