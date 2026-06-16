@@ -2,35 +2,13 @@ import { REMOTE_ORIGIN } from "../config.js";
 import { installObjectPropertyCandidateDetector } from "../property-detector.js";
 import { createGuildTrackerOverlay } from "./overlay.js";
 
-const GUILD_TRACKER_SCAN_DELAY_MS = 100;
 const API_BASE = `${REMOTE_ORIGIN || "https://game.endlessfrontier.io"}/api`;
 const GUILD_MANAGER_DETECTED_MARKER = "__efGuildTrackerDetected";
+const RANK_LIST_LIMIT = 10000;
 
 function sanitizeNumber(value) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : NaN;
-}
-
-function sleep(ms) {
-    return new Promise(resolve => window.setTimeout(resolve, ms));
-}
-
-function clonePlain(value, seen = new WeakSet()) {
-    if (value == null || typeof value !== "object") {
-        return value;
-    }
-    if (seen.has(value)) {
-        return "[Circular]";
-    }
-    seen.add(value);
-    if (Array.isArray(value)) {
-        return value.map(item => clonePlain(item, seen));
-    }
-    const output = {};
-    for (const [key, item] of Object.entries(value)) {
-        output[key] = clonePlain(item, seen);
-    }
-    return output;
 }
 
 function getNestedValue(source, paths) {
@@ -81,18 +59,24 @@ function isMeaningfulValue(value) {
     return true;
 }
 
-function mergeMemberData(base, detail, userProfile) {
-    const detailMember = detail?.body?.member || detail?.member || detail?.body?.user || detail?.user || {};
-    const user = userProfile?.body?.user || userProfile?.user || userProfile?.body || {};
-    const detailData = normalizeMember(detailMember);
-    const userData = normalizeMember({ user });
+function normalizeRankEntry(raw) {
     return {
-        ...base,
-        ...Object.fromEntries(Object.entries(detailData).filter(([, value]) => isMeaningfulValue(value))),
-        ...Object.fromEntries(Object.entries(userData).filter(([, value]) => isMeaningfulValue(value))),
-        rawDetail: detail ? clonePlain(detail.body || detail) : null,
-        rawUser: userProfile ? clonePlain(userProfile.body || userProfile) : null
+        userName: raw.name == null ? "" : String(raw.name),
+        maxWave: sanitizeNumber(raw.maxWave),
+        accuWave: sanitizeNumber(raw.accuWave),
+        accuMedal: sanitizeNumber(raw.accuMedal),
+        rank: sanitizeNumber(raw.rank)
     };
+}
+
+function mergeRankData(base, rankEntry) {
+    if (!rankEntry) {
+        return base;
+    }
+    const rankData = Object.fromEntries(
+        Object.entries(rankEntry).filter(([, value]) => isMeaningfulValue(value))
+    );
+    return { ...base, ...rankData };
 }
 
 function isGuildManager(candidate) {
@@ -229,31 +213,20 @@ export function attachGuildTracker({ scanWarnMs = 15000 } = {}) {
         return briefGuildId == null ? "" : String(briefGuildId);
     }
 
-    async function fetchMemberDetail(guildId, member) {
-        if (!member.memberId) {
-            return null;
-        }
+    async function fetchRankList(guildId) {
         try {
-            return await postGameApi("/guild/getMemberDetail", {
+            const response = await postGameApi("/guild/getRankList", {
                 guildId,
-                memberId: member.memberId,
-                uid: member.userId || ""
+                limit: RANK_LIST_LIMIT
             });
+            const rankList = getNestedValue(response, [
+                ["body", "rankList"],
+                ["rankList"]
+            ]);
+            return Array.isArray(rankList) ? rankList : [];
         } catch (error) {
-            record({ type: "member-detail-error", memberId: member.memberId, error: String(error?.message || error) });
-            return null;
-        }
-    }
-
-    async function fetchUserProfile(userId) {
-        if (!userId) {
-            return null;
-        }
-        try {
-            return await postGameApi("/user/getUser", { userId });
-        } catch (error) {
-            record({ type: "user-profile-error", userId, error: String(error?.message || error) });
-            return null;
+            record({ type: "rank-list-error", guildId, error: String(error?.message || error) });
+            return [];
         }
     }
 
@@ -275,38 +248,35 @@ export function attachGuildTracker({ scanWarnMs = 15000 } = {}) {
             liveState.guildId = guildId;
             setStatus("scanning", "Loading members...");
 
-            const memberResponse = await postGameApi("/guild/getMembers", { guildId });
+            const [memberResponse, rankListRaw] = await Promise.all([
+                postGameApi("/guild/getMembers", { guildId }),
+                fetchRankList(guildId)
+            ]);
+
             const members = memberResponse?.body?.members || memberResponse?.members || [];
             if (!Array.isArray(members)) {
                 throw new Error("Member response did not include a members array");
             }
 
-            const baseRows = members.map(normalizeMember);
-            liveState.rows = baseRows;
-            liveState.progress = { current: 0, total: baseRows.length };
-            publish();
-
-            const enrichedRows = [];
-            for (let index = 0; index < baseRows.length; index += 1) {
-                const base = baseRows[index];
-                liveState.progress = { current: index + 1, total: baseRows.length };
-                setStatus("scanning", `Enriching ${index + 1}/${baseRows.length}`);
-
-                const detail = await fetchMemberDetail(guildId, base);
-                const detailMember = detail?.body?.member || detail?.member || {};
-                const detailUserId = getNestedValue(detailMember, [["userId"], ["uid"], ["uId"], ["user", "userId"], ["user", "uid"]]);
-                const userId = base.userId || (detailUserId == null ? "" : String(detailUserId)) || base.memberId;
-                const shouldFetchUser = userId && !Number.isFinite(sanitizeNumber(getNestedValue(detailMember, [["medal"], ["user", "medal"]])));
-                const userProfile = shouldFetchUser ? await fetchUserProfile(userId) : null;
-                const merged = mergeMemberData({ ...base, userId }, detail, userProfile);
-                enrichedRows.push(merged);
-                liveState.rows = enrichedRows.concat(baseRows.slice(index + 1));
-                publish();
-                if (index < baseRows.length - 1) {
-                    await sleep(GUILD_TRACKER_SCAN_DELAY_MS);
+            const rankByName = new Map();
+            for (const entry of rankListRaw) {
+                const normalized = normalizeRankEntry(entry);
+                if (normalized.userName) {
+                    rankByName.set(normalized.userName, normalized);
                 }
             }
 
+            const baseRows = members.map(normalizeMember);
+            liveState.rows = baseRows;
+            liveState.progress = { current: baseRows.length, total: baseRows.length };
+            setStatus("scanning", "Merging rank data...");
+
+            const enrichedRows = baseRows.map(base => {
+                const rankEntry = rankByName.get(base.userName) || null;
+                return mergeRankData(base, rankEntry);
+            });
+
+            liveState.rows = enrichedRows;
             liveState.lastScanAt = new Date().toISOString();
             liveState.emptyText = "No members found";
             setStatus("idle", `Done: ${liveState.rows.length} members`);
