@@ -1,0 +1,6 @@
+# Runtime-generated game bundle cache (downloaded/extracted at startup)
+runtime/
+
+# Python bytecode cache
+__pycache__/
+*.py[cod]
